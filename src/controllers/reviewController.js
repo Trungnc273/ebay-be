@@ -171,3 +171,47 @@ exports.getReviewDetail = async (req, res, next) => {
     return next(err);
   }
 };
+
+exports.listReviewsBySeller = async (req, res, next) => {
+  try {
+    const { sellerId } = req.params;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 200);
+    const skip = (page - 1) * limit;
+
+    // reviews list
+    const rows = await Review.find({ seller: sellerId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("product", "title")
+      .populate("reviewer", "username")
+      .lean();
+
+    // total count
+    const total = await Review.countDocuments({ seller: sellerId });
+
+    // aggregate average rating for seller (if no docs -> null)
+    const agg = await Review.aggregate([
+      { $match: { seller: sellerId } },
+      {
+        $group: {
+          _id: "$seller",
+          avgRating: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+    const avgRating = agg && agg.length ? agg[0].avgRating : null;
+
+    return res.json({
+      data: rows,
+      page,
+      limit,
+      total,
+      avgRating,
+    });
+  } catch (err) {
+    return next(err);
+  }
+};

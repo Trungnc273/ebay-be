@@ -13,4 +13,6 @@ router.get("/product/:productId", ctrl.listReviewsByProduct);
 // Lấy chi tiết 1 review cụ thể
 router.get("/:id", ctrl.getReviewDetail);
 
+router.get("/seller/:sellerId", ctrl.listReviewsBySeller);
+
 module.exports = router;
