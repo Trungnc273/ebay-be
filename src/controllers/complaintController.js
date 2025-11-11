@@ -276,9 +276,6 @@ const sendToAdmin = async (req, res) => {
     const complaint = await Complaint.findById(id);
     if (!complaint) return res.status(404).json({ message: "Not found" });
 
-    if (complaint.buyer.toString() !== req.user._id.toString())
-      return res.status(403).json({ message: "Unauthorized" });
-
     complaint.status = "sent_to_admin";
     complaint.history.push({
       actionBy: req.user._id,
