@@ -130,7 +130,7 @@ const getComplaintDetail = async (req, res) => {
     if (!mongoose.isValidObjectId(id))
       return res.status(400).json({ message: "Invalid id" });
 
-    const r = await Complaint.findById(id)
+    const r = await Complaint.findOne({ _id: id })
       .populate("order")
       .populate("buyer", "username")
       .populate("seller", "username")
@@ -233,11 +233,11 @@ const handleComplaintBySeller = async (req, res) => {
       return res.status(400).json({ message: "Invalid id" });
 
     const { action, note } = req.body;
-    if (!action || (action !== "agree" && action !== "disagree")) {
+    if (!action || (action !== "agreed" && action !== "rejected")) {
       return res.status(400).json({ message: "Invalid action" });
     }
 
-    const complaint = await Complaint.findById(id);
+    const complaint = await Complaint.findOne({ _id: id });
     if (!complaint) return res.status(404).json({ message: "Not found" });
 
     if (
@@ -247,7 +247,7 @@ const handleComplaintBySeller = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    complaint.status = action === "agree" ? "agreed" : "rejected";
+    complaint.status = action === "agreed" ? "agreed" : "rejected";
     complaint.history.push({
       actionBy: req.user._id,
       action,
@@ -273,7 +273,7 @@ const sendToAdmin = async (req, res) => {
     if (!mongoose.isValidObjectId(id))
       return res.status(400).json({ message: "Invalid id" });
 
-    const complaint = await Complaint.findById(id);
+    const complaint = await Complaint.findOne({ _id: id });
     if (!complaint) return res.status(404).json({ message: "Not found" });
 
     if (complaint.buyer.toString() !== req.user._id.toString())
@@ -343,14 +343,14 @@ const adminHandle = async (req, res) => {
       return res.status(400).json({ message: "Invalid id" });
 
     const { action, note } = req.body;
-    if (!action || (action !== "approve" && action !== "reject")) {
+    if (!action || (action !== "agreed" && action !== "rejected")) {
       return res.status(400).json({ message: "Invalid action" });
     }
 
-    const complaint = await Complaint.findById(id);
+    const complaint = await Complaint.findOne({ _id: id });
     if (!complaint) return res.status(404).json({ message: "Not found" });
 
-    complaint.status = action === "approve" ? "agreed" : "rejected";
+    complaint.status = action === "agreed" ? "agreed" : "rejected";
     complaint.history.push({
       actionBy: req.user._id,
       action: `admin_${action}`,
