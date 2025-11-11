@@ -102,33 +102,38 @@ exports.getOrder = async (req, res, next) => {
     if (!id || !mongoose.isValidObjectId(id))
       return res.status(400).json({ message: "Invalid id" });
 
+    // populate đúng path: "items.productId"
     const o = await Order.findById(id)
       .populate("buyer", "username")
       .populate("seller", "username")
-      .populate("items.product", "title price")
-      .lean();
+      .populate("items.productId", "title price")
+      .lean(); // trả về plain object
 
     if (!o) return res.status(404).json({ message: "Order not found" });
 
     // auth: buyer, seller, admin can view
     const me = req.user;
-    const isBuyer =
-      o.buyer && o.buyer._id
-        ? o.buyer._id.toString() === me._id.toString()
-        : o.buyer.toString() === me._id.toString();
-    const isSeller =
-      o.seller && o.seller._id
-        ? o.seller._id.toString() === me._id.toString()
-        : o.seller.toString() === me._id.toString();
+    // an toàn với cả ObjectId/object/string: convert toString() or compare with equals if ObjectId
+    const meId = me._id ? me._id.toString() : String(me);
+
+    const buyerId =
+      o.buyer && o.buyer._id ? o.buyer._id.toString() : String(o.buyer);
+    const sellerId =
+      o.seller && o.seller._id ? o.seller._id.toString() : String(o.seller);
+
+    const isBuyer = buyerId === meId;
+    const isSeller = sellerId === meId;
+
     if (!isBuyer && !isSeller && me.role !== "admin")
       return res.status(403).json({ message: "Forbidden" });
 
     return res.json({ data: o });
   } catch (err) {
+    // Nếu bạn đang dùng Mongoose v7+ và nghi ngờ lỗi do strictPopulate,
+    // thông tin lỗi sẽ nằm trong err.message — không recommended disable.
     next(err);
   }
 };
-
 /**
  * List orders for user (buyer or seller). If admin, can pass ?userId=
  */
@@ -153,7 +158,7 @@ exports.listOrdersForUser = async (req, res, next) => {
       .limit(200)
       .populate("buyer", "username")
       .populate("seller", "username")
-      .populate("items.product", "title price")
+      .populate("items.productId", "title price")
       .lean();
 
     return res.json({ data: rows });
