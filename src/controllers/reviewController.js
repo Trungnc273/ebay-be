@@ -138,6 +138,7 @@ exports.listReviewsByProduct = async (req, res, next) => {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const skip = (page - 1) * limit;
 
+    // Lấy danh sách review của product
     const rows = await Review.find({ product: productId })
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -147,7 +148,42 @@ exports.listReviewsByProduct = async (req, res, next) => {
 
     const total = await Review.countDocuments({ product: productId });
 
-    return res.json({ data: rows, page, limit, total });
+    // Tính trung bình rating cho product
+    const agg = await Review.aggregate([
+      { $match: { product: new mongoose.Types.ObjectId(productId) } },
+      {
+        $group: {
+          _id: "$product",
+          avgRating: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const avgRating =
+      agg && agg.length ? Number(agg[0].avgRating.toFixed(2)) : null;
+
+    // Gắn averageRate vào từng review
+    const dataWithAvg = rows.map((r) => ({
+      ...r,
+      averageRate: avgRating,
+    }));
+
+    // Cập nhật lại product.averageRating và ratingCount nếu có
+    if (avgRating !== null) {
+      await Product.findByIdAndUpdate(productId, {
+        averageRating: avgRating,
+        ratingCount: total,
+      }).catch(() => {});
+    }
+
+    return res.json({
+      data: dataWithAvg,
+      page,
+      limit,
+      total,
+      averageRate: avgRating,
+    });
   } catch (err) {
     return next(err);
   }
@@ -179,7 +215,7 @@ exports.listReviewsBySeller = async (req, res, next) => {
     const limit = Math.min(parseInt(req.query.limit) || 20, 200);
     const skip = (page - 1) * limit;
 
-    // reviews list
+    // Lấy danh sách review
     const rows = await Review.find({ seller: sellerId })
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -188,12 +224,12 @@ exports.listReviewsBySeller = async (req, res, next) => {
       .populate("reviewer", "username")
       .lean();
 
-    // total count
+    // Tổng số review
     const total = await Review.countDocuments({ seller: sellerId });
 
-    // aggregate average rating for seller (if no docs -> null)
+    // Tính trung bình rating của seller
     const agg = await Review.aggregate([
-      { $match: { seller: sellerId } },
+      { $match: { seller: new mongoose.Types.ObjectId(sellerId) } },
       {
         $group: {
           _id: "$seller",
@@ -202,14 +238,29 @@ exports.listReviewsBySeller = async (req, res, next) => {
         },
       },
     ]);
-    const avgRating = agg && agg.length ? agg[0].avgRating : null;
+
+    const avgRating =
+      agg && agg.length ? Number(agg[0].avgRating.toFixed(2)) : null;
+
+    // Thêm averageRate vào từng item để FE không phải xử lý
+    const dataWithAvg = rows.map((r) => ({
+      ...r,
+      averageRate: avgRating,
+    }));
+
+    // Cập nhật luôn vào bảng User (nếu cần đồng bộ reputationScore)
+    if (avgRating !== null) {
+      await User.findByIdAndUpdate(sellerId, {
+        reputationScore: avgRating,
+      }).catch(() => {});
+    }
 
     return res.json({
-      data: rows,
+      data: dataWithAvg,
       page,
       limit,
       total,
-      avgRating,
+      averageRate: avgRating, // thêm cả tổng thể cho tiện
     });
   } catch (err) {
     return next(err);
