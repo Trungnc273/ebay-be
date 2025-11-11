@@ -130,7 +130,7 @@ const getComplaintDetail = async (req, res) => {
     if (!mongoose.isValidObjectId(id))
       return res.status(400).json({ message: "Invalid id" });
 
-    const r = await Complaint.findOne({ _id: id })
+    const r = await Complaint.findById(id)
       .populate("order")
       .populate("buyer", "username")
       .populate("seller", "username")
@@ -237,7 +237,7 @@ const handleComplaintBySeller = async (req, res) => {
       return res.status(400).json({ message: "Invalid action" });
     }
 
-    const complaint = await Complaint.findOne({ _id: id });
+    const complaint = await Complaint.findById(id);
     if (!complaint) return res.status(404).json({ message: "Not found" });
 
     if (
@@ -273,7 +273,7 @@ const sendToAdmin = async (req, res) => {
     if (!mongoose.isValidObjectId(id))
       return res.status(400).json({ message: "Invalid id" });
 
-    const complaint = await Complaint.findOne({ _id: id });
+    const complaint = await Complaint.findById(id);
     if (!complaint) return res.status(404).json({ message: "Not found" });
 
     if (complaint.buyer.toString() !== req.user._id.toString())
