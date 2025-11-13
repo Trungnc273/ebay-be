@@ -72,6 +72,7 @@ exports.getMessages = async (req, res, next) => {
     const msgs = await Message.find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
+      .populate('productRef')
       .lean();
 
     // decrypt server-side if decryptText exists and text looks encrypted

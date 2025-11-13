@@ -78,29 +78,31 @@ function initSocket(io) {
           // readBy empty initially
         };
 
-        const msg = await Message.create(msgDoc);
+        const newMsgDoc = await Message.create(msgDoc);
 
         // update conversation metadata: lastMessageAt and optionally lastMessage ref (if you track it)
         try {
           await Conversation.findByIdAndUpdate(conversationId, {
-            lastMessageAt: msg.createdAt || new Date(),
-            lastMessage: msg._id,
+            lastMessageAt: newMsgDoc.createdAt || new Date(),
+            lastMessage: newMsgDoc._id,
           }).catch(() => {}); // ignore update errors
         } catch (e) {
           // noop
         }
 
+        const newMsg = await newMsgDoc.populate('productRef');
+
         // Prepare payload to emit to room. We send encrypted text (client may decrypt),
         // and include _id + createdAt so clients can sort/ack.
         const emitPayload = {
-          id: msg._id,
-          conversationId: msg.conversation,
-          sender: msg.sender,
-          text: decryptText(msg.text),
-          attachments: msg.attachments,
-          productRef: msg.productRef,
-          readBy: msg.readBy || [],
-          createdAt: msg.createdAt,
+          id: newMsg._id,
+          conversationId: newMsg.conversation,
+          sender: newMsg.sender,
+          text: decryptText(newMsg.text),
+          attachments: newMsg.attachments,
+          productRef: newMsg.productRef,
+          readBy: newMsg.readBy || [],
+          createdAt: newMsg.createdAt,
         };
 
         io.to(conversationId).emit('new_message', emitPayload);
