@@ -5,9 +5,20 @@ const Product = require("../models/Product");
 const Order = require("../models/Order");
 const User = require("../models/User");
 
+const ALLOWED_TYPES = ["positive", "neutral", "negative"];
+
+const toObjectIdIfPossible = (v) => {
+  try {
+    return typeof v === "string" ? Types.ObjectId(v) : v;
+  } catch (e) {
+    return v;
+  }
+};
+
+// ----------------- CREATE REVIEW -----------------
 exports.createReview = async (req, res, next) => {
   try {
-    const { orderId, productId, rating, comment } = req.body;
+    const { orderId, productId, rating, comment, type } = req.body;
     const reviewer = req.user && req.user._id;
 
     if (!orderId || !productId || rating == null) {
@@ -21,6 +32,20 @@ exports.createReview = async (req, res, next) => {
       return res
         .status(400)
         .json({ message: "rating must be number between 1 and 5" });
+    }
+
+    // validate type if provided
+    let finalType = null;
+    if (type) {
+      if (!ALLOWED_TYPES.includes(type)) {
+        return res
+          .status(400)
+          .json({ message: `type must be one of ${ALLOWED_TYPES.join(",")}` });
+      }
+      finalType = type;
+    } else {
+      // derive from rating
+      finalType = r >= 4 ? "positive" : r === 3 ? "neutral" : "negative";
     }
 
     // Ensure order exists
@@ -44,7 +69,7 @@ exports.createReview = async (req, res, next) => {
         .status(400)
         .json({ message: "Product not found in the given order" });
 
-    // Prevent duplicate review by same reviewer for same product+order
+    // Prevent duplicate review
     const exists = await Review.findOne({
       order: orderId,
       product: productId,
@@ -55,7 +80,7 @@ exports.createReview = async (req, res, next) => {
         message: "Review already exists for this product/order by you",
       });
 
-    // Determine seller
+    // Determine seller (order.seller preferred)
     let sellerId = order.seller || null;
     if (!sellerId) {
       const prod = await Product.findById(productId).lean();
@@ -70,50 +95,60 @@ exports.createReview = async (req, res, next) => {
       seller: sellerId,
       rating: r,
       comment: comment ? String(comment).trim() : "",
+      type: finalType,
     };
 
     const newReview = await Review.create(reviewDoc);
 
-    const toObjectIdIfNeeded = (val) => {
-      if (!val) return val;
-      if (typeof val === "string") return new Types.ObjectId(val);
-      return val;
-    };
-
-    // Recompute product stats
-    const agg = await Review.aggregate([
-      { $match: { product: toObjectIdIfNeeded(productId) } },
-      {
-        $group: {
-          _id: "$product",
-          avgRating: { $avg: "$rating" },
-          count: { $sum: 1 },
+    // Recompute product stats (agg)
+    try {
+      const prodOid = toObjectIdIfPossible(productId);
+      const agg = await Review.aggregate([
+        { $match: { product: prodOid } },
+        {
+          $group: {
+            _id: "$product",
+            avgRating: { $avg: "$rating" },
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]);
-    if (agg && agg.length) {
-      const { avgRating, count } = agg[0];
-      await Product.findByIdAndUpdate(productId, {
-        averageRating: avgRating,
-        ratingCount: count,
-      }).catch(() => {});
-    } else {
-      await Product.findByIdAndUpdate(productId, {
-        averageRating: r,
-        ratingCount: 1,
-      }).catch(() => {});
+      ]);
+      if (agg && agg.length) {
+        const { avgRating, count } = agg[0];
+        await Product.findByIdAndUpdate(productId, {
+          averageRating: Number(avgRating.toFixed(2)),
+          ratingCount: count,
+        }).catch(() => {});
+      } else {
+        await Product.findByIdAndUpdate(productId, {
+          averageRating: r,
+          ratingCount: 1,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      // ignore aggregation error
     }
 
-    // Recompute seller reputation
+    // Recompute seller reputation (agg)
     if (sellerId) {
-      const sAgg = await Review.aggregate([
-        { $match: { seller: toObjectIdIfNeeded(sellerId) } },
-        { $group: { _id: "$seller", avgRating: { $avg: "$rating" } } },
-      ]);
-      if (sAgg && sAgg.length) {
-        await User.findByIdAndUpdate(sellerId, {
-          reputationScore: sAgg[0].avgRating,
-        }).catch(() => {});
+      try {
+        const sAgg = await Review.aggregate([
+          { $match: { seller: toObjectIdIfPossible(sellerId) } },
+          {
+            $group: {
+              _id: "$seller",
+              avgRating: { $avg: "$rating" },
+              total: { $sum: 1 },
+            },
+          },
+        ]);
+        if (sAgg && sAgg.length) {
+          await User.findByIdAndUpdate(sellerId, {
+            reputationScore: Number(sAgg[0].avgRating.toFixed(2)),
+          }).catch(() => {});
+        }
+      } catch (e) {
+        // ignore
       }
     }
 
@@ -128,8 +163,7 @@ exports.createReview = async (req, res, next) => {
     return next(err);
   }
 };
-
-// List reviews by product
+// ----------------- LIST REVIEWS BY PRODUCT -----------------
 exports.listReviewsByProduct = async (req, res, next) => {
   try {
     const { productId } = req.params;
@@ -138,7 +172,6 @@ exports.listReviewsByProduct = async (req, res, next) => {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const skip = (page - 1) * limit;
 
-    // Lấy danh sách review của product
     const rows = await Review.find({ product: productId })
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -148,28 +181,31 @@ exports.listReviewsByProduct = async (req, res, next) => {
 
     const total = await Review.countDocuments({ product: productId });
 
-    // Tính trung bình rating cho product
-    const agg = await Review.aggregate([
-      { $match: { product: new mongoose.Types.ObjectId(productId) } },
-      {
-        $group: {
-          _id: "$product",
-          avgRating: { $avg: "$rating" },
-          count: { $sum: 1 },
+    // compute avg
+    let avgRating = null;
+    try {
+      const agg = await Review.aggregate([
+        { $match: { product: toObjectIdIfPossible(productId) } },
+        {
+          $group: {
+            _id: "$product",
+            avgRating: { $avg: "$rating" },
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]);
+      ]);
+      if (agg && agg.length) avgRating = Number(agg[0].avgRating.toFixed(2));
+    } catch (e) {
+      // ignore
+    }
 
-    const avgRating =
-      agg && agg.length ? Number(agg[0].avgRating.toFixed(2)) : null;
-
-    // Gắn averageRate vào từng review
-    const dataWithAvg = rows.map((r) => ({
+    const dataWithType = rows.map((r) => ({
       ...r,
+      type: r.type || null,
       averageRate: avgRating,
     }));
 
-    // Cập nhật lại product.averageRating và ratingCount nếu có
+    // update product stats best-effort
     if (avgRating !== null) {
       await Product.findByIdAndUpdate(productId, {
         averageRating: avgRating,
@@ -178,7 +214,7 @@ exports.listReviewsByProduct = async (req, res, next) => {
     }
 
     return res.json({
-      data: dataWithAvg,
+      data: dataWithType,
       page,
       limit,
       total,
@@ -208,6 +244,7 @@ exports.getReviewDetail = async (req, res, next) => {
   }
 };
 
+// ----------------- LIST REVIEWS BY SELLER -----------------
 exports.listReviewsBySeller = async (req, res, next) => {
   try {
     const { sellerId } = req.params;
@@ -215,8 +252,16 @@ exports.listReviewsBySeller = async (req, res, next) => {
     const limit = Math.min(parseInt(req.query.limit) || 20, 200);
     const skip = (page - 1) * limit;
 
-    // Lấy danh sách review
-    const rows = await Review.find({ seller: sellerId })
+    // nếu muốn strict: trả 400 ngay nếu sellerId không phải ObjectId
+    if (!mongoose.isValidObjectId(sellerId)) {
+      return res.status(400).json({ message: "Invalid sellerId" });
+    }
+
+    // CHÚ Ý: phải dùng `new` với Types.ObjectId
+    const sellerMatchValue = new mongoose.Types.ObjectId(sellerId);
+
+    // dùng cùng một kiểu (ObjectId) cho find/count/aggregate để nhất quán
+    const rows = await Review.find({ seller: sellerMatchValue })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -224,43 +269,68 @@ exports.listReviewsBySeller = async (req, res, next) => {
       .populate("reviewer", "username")
       .lean();
 
-    // Tổng số review
-    const total = await Review.countDocuments({ seller: sellerId });
+    const totalFromCount = await Review.countDocuments({
+      seller: sellerMatchValue,
+    });
 
-    // Tính trung bình rating của seller
-    const agg = await Review.aggregate([
-      { $match: { seller: new mongoose.Types.ObjectId(sellerId) } },
-      {
-        $group: {
-          _id: "$seller",
-          avgRating: { $avg: "$rating" },
-          count: { $sum: 1 },
+    let avgRating = null;
+    let positiveCount = 0;
+    let totalCount = totalFromCount;
+
+    try {
+      const agg = await Review.aggregate([
+        { $match: { seller: sellerMatchValue } },
+        {
+          $group: {
+            _id: "$seller",
+            avgRating: { $avg: "$rating" },
+            total: { $sum: 1 },
+            positive: {
+              $sum: {
+                $cond: [{ $eq: ["$type", "positive"] }, 1, 0],
+              },
+            },
+          },
         },
-      },
-    ]);
+      ]);
 
-    const avgRating =
-      agg && agg.length ? Number(agg[0].avgRating.toFixed(2)) : null;
+      if (Array.isArray(agg) && agg.length > 0) {
+        const a = agg[0];
+        avgRating =
+          typeof a.avgRating === "number"
+            ? Number(a.avgRating.toFixed(2))
+            : null;
+        positiveCount = Number(a.positive || 0);
+        totalCount = Number(a.total || totalFromCount);
+      }
+    } catch (e) {
+      console.error("Aggregation error in listReviewsBySeller:", e);
+    }
 
-    // Thêm averageRate vào từng item để FE không phải xử lý
-    const dataWithAvg = rows.map((r) => ({
+    const positiveRate =
+      totalCount > 0
+        ? Number(((positiveCount / totalCount) * 100).toFixed(2))
+        : null;
+
+    const dataWithType = rows.map((r) => ({
       ...r,
-      averageRate: avgRating,
+      type: r.type || null,
     }));
 
-    // Cập nhật luôn vào bảng User (nếu cần đồng bộ reputationScore)
     if (avgRating !== null) {
-      await User.findByIdAndUpdate(sellerId, {
-        reputationScore: avgRating,
-      }).catch(() => {});
+      User.findByIdAndUpdate(sellerId, { reputationScore: avgRating }).catch(
+        () => {}
+      );
     }
 
     return res.json({
-      data: dataWithAvg,
+      data: dataWithType,
       page,
       limit,
-      total,
-      averageRate: avgRating, // thêm cả tổng thể cho tiện
+      total: totalCount,
+      averageRate: avgRating,
+      positiveRate,
+      positiveCount,
     });
   } catch (err) {
     return next(err);

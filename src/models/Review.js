@@ -1,4 +1,3 @@
-// src/models/Review.js
 const mongoose = require("mongoose");
 
 const reviewSchema = new mongoose.Schema(
@@ -38,14 +37,20 @@ const reviewSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000,
     },
+
+    type: {
+      type: String,
+      enum: ["positive", "neutral", "negative"],
+      index: true,
+    },
   },
   { timestamps: true }
 );
 
-// Một người chỉ được review 1 lần cho cùng product trong cùng order
+// unique constraint
 reviewSchema.index({ order: 1, reviewer: 1, product: 1 }, { unique: true });
 
-// Index rating để dễ tính toán thống kê
+// rating index
 reviewSchema.index({ product: 1, rating: 1 });
 
 module.exports = mongoose.model("Review", reviewSchema);
