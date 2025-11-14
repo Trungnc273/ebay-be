@@ -1,27 +1,27 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
 const complaintSchema = new Schema(
   {
     order: {
       type: Schema.Types.ObjectId,
-      ref: "Order",
+      ref: 'Order',
       required: true,
       index: true,
     },
     buyer: {
       type: Schema.Types.ObjectId,
-      ref: "User",
+      ref: 'User',
       required: true,
     },
     seller: {
       type: Schema.Types.ObjectId,
-      ref: "User",
+      ref: 'User',
       required: true,
     },
     reason: {
       type: String,
-      enum: ["product_issue", "late_delivery", "fraud", "other"],
+      enum: ['question', 'late', 'return', 'fraud', 'cancel'],
       required: true,
     },
     content: {
@@ -36,13 +36,13 @@ const complaintSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["open", "in_review", "agreed", "rejected", "sent_to_admin"],
-      default: "open",
+      enum: ['open', 'in_review', 'agreed', 'rejected', 'sent_to_admin'],
+      default: 'open',
     },
     history: {
       type: [
         {
-          actionBy: { type: Schema.Types.ObjectId, ref: "User" },
+          actionBy: { type: Schema.Types.ObjectId, ref: 'User' },
           action: String,
           note: String,
           at: { type: Date, default: Date.now },
@@ -52,10 +52,10 @@ const complaintSchema = new Schema(
     },
   },
   {
-    timestamps: true, 
+    timestamps: true,
   }
 );
 
 complaintSchema.index({ buyer: 1, seller: 1, status: 1 });
 
-module.exports = mongoose.model("Complaint", complaintSchema);
+module.exports = mongoose.model('Complaint', complaintSchema);
